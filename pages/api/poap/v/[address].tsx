@@ -22,12 +22,32 @@ const recentPoapsPositions = [
 export default async function handler(request) {
 
     const fontData = await font;
-
     const address = request.nextUrl.searchParams.get('address');
+
     if (!address) {
         return new Response('Invalid address', { status: 400 });
     }
-    const poaps = await getPoapsOfAddress(address);
+
+    let poaps = [];
+
+    if (request.method === 'POST') {
+        const { poaps: poapsParam, poapapikey } = await request.json();
+
+        if (poapapikey !== process.env.POAP_API_KEY) {
+            return new Response('Invalid API key', { status: 401 });
+        }
+
+        if (!poapsParam) {
+            return new Response('Invalid POAPs data', { status: 400 });
+        }
+
+        poaps = poapsParam;
+    } else if (request.method === 'GET') {
+        poaps = await getPoapsOfAddress(address);
+    } else {
+        return new Response('Invalid method', { status: 405 });
+    }
+
     const recentPoaps = poaps.sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime()).slice(0, 7);
     recentPoaps.reverse();
 
@@ -110,7 +130,7 @@ export default async function handler(request) {
                             textAlign: 'right',
                             paddingLeft: '20px',
                             boxSizing: 'border-box',
-                            lineHeight: '93px', 
+                            lineHeight: '93px',
                         }}
                     >
                         {address.length > 32 ? `${address.slice(0, 16)}...${address.slice(-16)}` : address}
