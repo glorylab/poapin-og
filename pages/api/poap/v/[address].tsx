@@ -1,7 +1,7 @@
 import { createClient } from '@vercel/kv';
-
-import { ImageResponse } from '@vercel/og';
 import { getPoapsOfAddress } from '../../../../utils/poap';
+import { ImageResponse } from '@vercel/og';
+
 
 const font = fetch(new URL('../../../../assets/MonaspaceXenon-WideMediumItalic.otf', import.meta.url)).then(
     (res) => res.arrayBuffer()
@@ -46,8 +46,6 @@ export default async function handler(request) {
     }
 
     const cachedImage = await kvClient.hgetall(address);
-
-    console.log(`Cached image for ${address}:`, cachedImage);
 
     if (cachedImage && Date.now() - Number(cachedImage.lastUpdated) < ONE_HOUR) {
         return Response.redirect(cachedImage.url as string);
@@ -177,10 +175,8 @@ export default async function handler(request) {
         },
     );
 
-    const ogImageBuffer = await ogImage.arrayBuffer();
-
     const formData = new FormData();
-    formData.append('file', new Blob([ogImageBuffer], { type: 'image/png' }));
+    formData.append('file', await ogImage.blob(), `${address}.png`);
 
     const compressedImageResponse = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/images/v1`, {
         method: 'POST',
@@ -203,9 +199,6 @@ export default async function handler(request) {
         url: compressedImageUrl,
         lastUpdated: Date.now().toString(),
     });
-
-    console.log(`Image for ${address} generated and cached`);
-    console.log(`Compressed image URL: ${compressedImageUrl}`);
 
     return Response.redirect(compressedImageUrl);
 }
