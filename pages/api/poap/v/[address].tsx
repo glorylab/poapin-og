@@ -1,3 +1,5 @@
+import { createClient } from '@vercel/kv';
+
 import { ImageResponse } from '@vercel/og';
 import { getPoapsOfAddress } from '../../../../utils/poap';
 
@@ -9,6 +11,16 @@ export const config = {
     runtime: 'edge',
 };
 
+const kvClient = createClient({
+    url: process.env.KV_REST_API_URL,
+    token: process.env.KV_REST_API_TOKEN,
+});
+
+const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
+const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
+
+const ONE_HOUR = 60 * 60 * 1000;
+
 const recentPoapsPositions = [
     { x: 310, y: 435 },
     { x: 380, y: 415 },
@@ -19,6 +31,11 @@ const recentPoapsPositions = [
     { x: 730, y: 435 },
 ];
 
+interface CachedImage {
+    url: string;
+    lastUpdated: string;
+}
+
 export default async function handler(request) {
 
     const fontData = await font;
@@ -26,6 +43,14 @@ export default async function handler(request) {
 
     if (!address) {
         return new Response('Invalid address', { status: 400 });
+    }
+
+    const cachedImage = await kvClient.hgetall(address);
+
+    console.log(`Cached image for ${address}:`, cachedImage);
+
+    if (cachedImage && Date.now() - Number(cachedImage.lastUpdated) < ONE_HOUR) {
+        return Response.redirect(cachedImage.url as string);
     }
 
     let poaps = [];
@@ -51,7 +76,7 @@ export default async function handler(request) {
     const recentPoaps = poaps.sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime()).slice(0, 7);
     recentPoaps.reverse();
 
-    return new ImageResponse(
+    const ogImage = await new ImageResponse(
         (
             <div
                 style={{
@@ -151,4 +176,36 @@ export default async function handler(request) {
             ],
         },
     );
+
+    const ogImageBuffer = await ogImage.arrayBuffer();
+
+    const formData = new FormData();
+    formData.append('file', new Blob([ogImageBuffer], { type: 'image/png' }));
+
+    const compressedImageResponse = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/images/v1`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
+        },
+        body: formData,
+    });
+
+    const responseData = await compressedImageResponse.json();
+
+    if (!responseData.success) {
+        console.error('Failed to upload image to Cloudflare:', responseData.errors);
+        return new Response('Failed to generate image', { status: 500 });
+    }
+
+    const compressedImageUrl = responseData.result.variants[0];
+
+    await kvClient.hset(address, {
+        url: compressedImageUrl,
+        lastUpdated: Date.now().toString(),
+    });
+
+    console.log(`Image for ${address} generated and cached`);
+    console.log(`Compressed image URL: ${compressedImageUrl}`);
+
+    return Response.redirect(compressedImageUrl);
 }
