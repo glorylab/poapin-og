@@ -4,7 +4,7 @@ import { ImageResponse } from '@vercel/og';
 
 
 const font = fetch('https://assets.glorylab.xyz/MonaspaceXenon-WideMediumItalic.otf').then((res) =>
-    res.text()
+    res.arrayBuffer(),
 );
 
 export const config = {
