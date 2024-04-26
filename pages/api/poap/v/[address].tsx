@@ -20,6 +20,7 @@ const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
 
 const ONE_HOUR = 60 * 60 * 1000;
+const ONE_DAY = 24 * ONE_HOUR;
 
 const recentPoapsPositions = [
     { x: 310, y: 435 },
@@ -47,7 +48,7 @@ export default async function handler(request) {
 
     const cachedImage = await kvClient.hgetall(address);
 
-    if (cachedImage && Date.now() - Number(cachedImage.lastUpdated) < ONE_HOUR) {
+    if (cachedImage && Date.now() - Number(cachedImage.lastUpdated) < ONE_DAY) {
         return Response.redirect(cachedImage.url as string);
     }
 
