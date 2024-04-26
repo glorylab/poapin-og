@@ -103,7 +103,7 @@ export default async function handler(request) {
                     <img
                         src={layer0ImageUrl}
                         alt="Background Layer 0"
-                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0 }}
+                        style={{ position: 'absolute', objectFit: 'cover', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0 }}
                     />
 
                     {/* POAP images */}
