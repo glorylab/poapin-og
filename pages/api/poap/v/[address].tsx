@@ -3,7 +3,7 @@ import { getPoapsOfAddress } from '../../../../utils/poap';
 import { ImageResponse } from '@vercel/og';
 
 
-const font = fetch(new URL('../../../../assets/MonaspaceXenon-WideMediumItalic.otf', import.meta.url)).then(
+const font = fetch(new URL('https://assets.glorylab.xyz/MonaspaceXenon-WideMediumItalic.otf', import.meta.url)).then(
     (res) => res.arrayBuffer()
 )
 
