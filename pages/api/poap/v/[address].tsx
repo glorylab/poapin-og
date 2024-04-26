@@ -53,10 +53,10 @@ export default async function handler(request) {
     }
 
     let poaps = [];
-    let latestedMoments = [];
+    let latestMoments = [];
 
     if (request.method === 'POST') {
-        const { poaps: poapsParam, latestedMoments: latestedMomentsParam , poapapikey } = await request.json();
+        const { poaps: poapsParam, latestMoments: latestMomentsParam , poapapikey } = await request.json();
 
         if (poapapikey !== process.env.POAP_API_KEY) {
             return new Response('Invalid API key', { status: 401 });
@@ -67,8 +67,8 @@ export default async function handler(request) {
         }
 
         poaps = poapsParam;
-        latestedMoments = latestedMomentsParam;
-        console.log('latestedMoments', latestedMoments);
+        latestMoments = latestMomentsParam;
+        console.log('latestMoments', latestMoments);
     } else if (request.method === 'GET') {
         poaps = await getPoapsOfAddress(address);
     } else {
