@@ -52,7 +52,7 @@ export default async function handler(request) {
 
         const cachedImage = await kvClient.hgetall(address);
 
-        if (cachedImage && Date.now() - Number(cachedImage.lastUpdated) < ONE_MINUTE) {
+        if (cachedImage && Date.now() - Number(cachedImage.lastUpdated) < ONE_DAY) {
             return Response.redirect(cachedImage.url as string);
         }
 
