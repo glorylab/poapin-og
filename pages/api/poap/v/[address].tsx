@@ -3,9 +3,9 @@ import { getPoapsOfAddress } from '../../../../utils/poap';
 import { ImageResponse } from '@vercel/og';
 
 
-const font = fetch(new URL('https://assets.glorylab.xyz/MonaspaceXenon-WideMediumItalic.otf', import.meta.url)).then(
-    (res) => res.arrayBuffer()
-)
+const font = fetch('https://assets.glorylab.xyz/MonaspaceXenon-WideMediumItalic.otf').then((res) =>
+    res.text()
+);
 
 export const config = {
     runtime: 'edge',
