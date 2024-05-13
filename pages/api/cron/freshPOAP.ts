@@ -11,7 +11,7 @@ const INITIAL_TIMESTAMP = Math.floor(initialDate.getTime() / 1000);
 
 export default async function handler(req, res) {
 
-  if (req.headers.get('Authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
+  if (req.headers['authorization'] !== `Bearer ${process.env.CRON_SECRET}`) {
     return res.status(401).end('Unauthorized');
   }
 
