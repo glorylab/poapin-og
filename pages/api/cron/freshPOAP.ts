@@ -19,6 +19,7 @@ export default async function handler(req, res) {
     try {
       const lastUpdateTimestamp = await kvClient.get('lastUpdateTimestampOfPOAP') || INITIAL_TIMESTAMP;
       const currentTimestamp = Math.floor(Date.now() / 1000);
+      console.info('Last update timestamp:', lastUpdateTimestamp);
 
       const query = `
         query {
@@ -40,8 +41,10 @@ export default async function handler(req, res) {
       const { data } = await response.json();
       const poaps = data.poaps;
 
-      const uniqueAddresses: string[] = Array.from(new Set(poaps.map((poap: any) => poap.collector_address)));
+      console.info('POAPs:', poaps);
 
+      const uniqueAddresses: string[] = Array.from(new Set(poaps.map((poap: any) => poap.collector_address)));
+      console.info('Unique addresses:', uniqueAddresses);
       for (const address of uniqueAddresses) {
         await fetch(`/api/poap/v/${address}`, { method: 'GET' });
       }
