@@ -46,10 +46,12 @@ export default async function handler(req, res) {
       const uniqueAddresses: string[] = Array.from(new Set(poaps.map((poap: any) => poap.collector_address)));
       console.info('Unique addresses:', uniqueAddresses);
       for (const address of uniqueAddresses) {
-        await fetch(`https://og.poap.in/api/poap/v/${address}`, { method: 'GET' });
+        fetch(`https://og.poap.in/api/poap/v/${address}`, { method: 'GET' });
+        console.info(`fetch: https://og.poap.in/api/poap/v/${address}`);
       }
 
       await kvClient.set('lastUpdateTimestampOfPOAP', currentTimestamp);
+      console.info('lastUpdateTimestampOfPOAP:', currentTimestamp);
 
       res.status(200).json({ message: 'POAPs updated successfully' });
     } catch (error) {
