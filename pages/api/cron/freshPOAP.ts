@@ -15,7 +15,7 @@ export default async function handler(req, res) {
     return res.status(401).end('Unauthorized');
   }
 
-  if (req.method === 'POST') {
+  if (req.method === 'GET') {
     try {
       const lastUpdateTimestamp = await kvClient.get('lastUpdateTimestampOfPOAP') || INITIAL_TIMESTAMP;
       const currentTimestamp = Math.floor(Date.now() / 1000);
