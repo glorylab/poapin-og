@@ -9,6 +9,12 @@ const initialDate = new Date('2024-05-13T17:00:00Z');
 initialDate.setUTCHours(initialDate.getUTCHours() + 9);
 const INITIAL_TIMESTAMP = Math.floor(initialDate.getTime() / 1000);
 
+function sendRequest(address) {
+  fetch(`https://og.poap.in/api/poap/v/${address}`, { method: 'GET' })
+    .then(response => console.log(`fetch: ${address}`))
+    .catch(error => console.error(`Failed to send request to ${address}: ${error}`));
+}
+
 export default async function handler(req, res) {
 
   if (req.headers['authorization'] !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -45,9 +51,10 @@ export default async function handler(req, res) {
 
       const uniqueAddresses: string[] = Array.from(new Set(poaps.map((poap: any) => poap.collector_address)));
       console.info('Unique addresses:', uniqueAddresses);
+
       for (const address of uniqueAddresses) {
-        fetch(`https://og.poap.in/api/poap/v/${address}`, { method: 'GET' });
-        console.info(`fetch: https://og.poap.in/api/poap/v/${address}`);
+        // Wait 10 milliseconds before sending the next request
+        setTimeout(() => sendRequest(address), 10);
       }
 
       await kvClient.set('lastUpdateTimestampOfPOAP', currentTimestamp);
