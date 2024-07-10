@@ -21,7 +21,7 @@
     "@types/node": "^20.14.10",
     "@types/react": "^18.3.3",
     "eslint": "^9.6.0",
-    "turbo": "^1.8.5",
+    "turbo": "^2.0.6",
     "typescript": "^5.5.3"
   }
 }
