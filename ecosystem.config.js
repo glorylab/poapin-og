@@ -1,3 +1,5 @@
+require('dotenv').config();
+
 module.exports = {
     apps: [
         {
@@ -8,7 +10,7 @@ module.exports = {
             exec_mode: 'cluster',
             watch: false,
             env: {
-                PORT: process.env.PORT,
+                PORT: process.env.PORT || 3000,
                 NODE_ENV: 'production',
                 CLOUDFLARE_ACCOUNT_ID: process.env.CLOUDFLARE_ACCOUNT_ID,
                 CLOUDFLARE_API_TOKEN: process.env.CLOUDFLARE_API_TOKEN,

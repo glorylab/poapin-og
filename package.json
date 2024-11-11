@@ -19,6 +19,7 @@
     "@vercel/kv": "^2.0.0",
     "@vercel/og": "^0.6.2",
     "clsx": "^2.1.1",
+    "dotenv": "^16.4.5",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest"
