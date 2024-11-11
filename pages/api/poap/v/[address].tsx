@@ -1,7 +1,6 @@
-import { createClient } from '@vercel/kv';
 import { getPoapsOfAddress } from '../../../../utils/poap';
 import { ImageResponse } from '@vercel/og';
-
+import { getFromKV, setToKV } from '../../../../utils/kv';
 
 const font = fetch('https://assets.glorylab.xyz/MonaspaceXenon-WideMediumItalic.otf').then((res) =>
     res.arrayBuffer(),
@@ -10,11 +9,6 @@ const font = fetch('https://assets.glorylab.xyz/MonaspaceXenon-WideMediumItalic.
 export const config = {
     runtime: 'edge',
 };
-
-const kvClient = createClient({
-    url: process.env.KV_REST_API_URL,
-    token: process.env.KV_REST_API_TOKEN,
-});
 
 const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
 const CLOUDFLARE_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
@@ -50,7 +44,7 @@ export default async function handler(request) {
             return new Response('Invalid address', { status: 400 });
         }
 
-        const cachedImage = await kvClient.hgetall(address);
+        const cachedImage = await getFromKV(address);
 
         if (cachedImage && Date.now() - Number(cachedImage.lastUpdated) < ONE_DAY) {
             return Response.redirect(cachedImage.url as string);
@@ -207,7 +201,7 @@ export default async function handler(request) {
 
         const compressedImageUrl = responseData.result.variants[0];
 
-        await kvClient.hset(address, {
+        await setToKV(address, {
             url: compressedImageUrl,
             lastUpdated: Date.now().toString(),
         });
