@@ -1,13 +1,96 @@
 import { getPoapsOfAddress } from '../../../../utils/poap';
 import { ImageResponse } from '@vercel/og';
 import { getFromKV, setToKV } from '../../../../utils/kv';
+import { assetsManager } from '../../../../utils/assetsManager';
+import type { NextApiRequest, NextApiResponse } from 'next';
 
-const font = fetch('https://assets.glorylab.xyz/MonaspaceXenon-WideMediumItalic.otf').then((res) =>
-    res.arrayBuffer(),
-);
+class PerformanceMonitor {
+    private timers: Map<string, number> = new Map();
+    private durations: Map<string, number> = new Map();
+
+    start(label: string) {
+        this.timers.set(label, Date.now());
+    }
+
+    end(label: string) {
+        const startTime = this.timers.get(label);
+        if (startTime) {
+            const duration = Date.now() - startTime;
+            this.durations.set(label, duration);
+            this.timers.delete(label);
+        }
+    }
+
+    getDuration(label: string): number {
+        return this.durations.get(label) || 0;
+    }
+
+    getSummary(): string {
+        let summary = '\nPerformance Summary:\n';
+        let total = 0;
+
+        // Exclude total duration
+        this.durations.forEach((duration, label) => {
+            if (label !== 'total') {
+                summary += `${label}: ${duration}ms\n`;
+                total += duration;
+            }
+        });
+
+        const actualTotal = this.durations.get('total') || total;
+        summary += `Total Time: ${actualTotal}ms\n`;
+        return summary;
+    }
+}
+
+const uploadToCloudflareBackground = async (imageBlob: Blob, address: string, monitor: PerformanceMonitor) => {
+    monitor.start('total');
+    try {
+        monitor.start('uploadToCloudflare');
+        const formData = new FormData();
+        formData.append('file', imageBlob, `${address}.png`);
+
+        const compressedImageResponse = await fetch(
+            `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/images/v1`,
+            {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
+                },
+                body: formData,
+            }
+        );
+
+        const responseData = await compressedImageResponse.json();
+        monitor.end('uploadToCloudflare');
+
+        if (!responseData.success) {
+            throw new Error('Failed to upload to Cloudflare');
+        }
+
+        monitor.start('saveCache');
+        await setToKV(address, {
+            url: responseData.result.variants[0],
+            lastUpdated: Date.now().toString(),
+        });
+        monitor.end('saveCache');
+
+        monitor.end('total');
+        console.log('Background task completed:', monitor.getSummary());
+    } catch (error) {
+        monitor.end('total');
+        console.error('Background task failed:', error);
+        console.log('Failed background task metrics:', monitor.getSummary());
+    }
+};
 
 export const config = {
-    runtime: 'edge',
+    api: {
+        responseLimit: false,
+        bodyParser: {
+            sizeLimit: '4mb',
+        },
+    },
 };
 
 const CLOUDFLARE_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID;
@@ -34,51 +117,68 @@ interface CachedImage {
 
 const TIMEOUT_MS = 5000;
 
-export default async function handler(request) {
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+
+    const monitor = new PerformanceMonitor();
+    monitor.start('total');
 
     try {
-        const fontData = await font;
-        const address = request.nextUrl.searchParams.get('address');
+        // Load font
+        monitor.start('loadFont');
+        const fontData = assetsManager.getFont();
+        monitor.end('loadFont');
 
-        if (!address) {
-            return new Response('Invalid address', { status: 400 });
+        const { address } = req.query;
+
+        if (!address || Array.isArray(address)) {
+            return res.status(400).json({ error: 'Invalid address' });
         }
 
+        // Check cache
+        monitor.start('checkCache');
         const cachedImage = await getFromKV(address);
+        monitor.end('checkCache');
 
         if (cachedImage && Date.now() - Number(cachedImage.lastUpdated) < ONE_DAY) {
-            return Response.redirect(cachedImage.url as string);
+            monitor.end('total');
+            console.log(monitor.getSummary());
+            return res.redirect(cachedImage.url);
         }
 
         let poaps = [];
         let latestMoments = [];
 
-        if (request.method === 'POST') {
-            const { poaps: poapsParam, latestMoments: latestMomentsParam, poapapikey } = await request.json();
+        // Get data
+        monitor.start('getData');
+        if (req.method === 'POST') {
+            const { poaps: poapsParam, latestMoments: latestMomentsParam, poapapikey } = req.body;
 
             if (poapapikey !== process.env.POAP_API_KEY) {
-                return new Response('Invalid API key', { status: 401 });
+                return res.status(401).json({ error: 'Invalid API key' });
             }
 
             if (!poapsParam) {
-                return new Response('Invalid POAPs data', { status: 400 });
+                return res.status(400).json({ error: 'Invalid POAPs data' });
             }
 
             poaps = poapsParam;
             latestMoments = latestMomentsParam;
             console.log('latestMoments', latestMoments);
-        } else if (request.method === 'GET') {
+        } else if (req.method === 'GET') {
             poaps = await getPoapsOfAddress(address);
         } else {
-            return new Response('Invalid method', { status: 405 });
+            return res.status(405).json({ error: 'Method not allowed' });
         }
+        monitor.end('getData');
 
+        // Generate image
+        monitor.start('generateImage');
         const recentPoaps = poaps.sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime()).slice(0, 7);
         recentPoaps.reverse();
 
         const layer0ImageUrl = latestMoments && latestMoments.length > 0
             ? latestMoments.sort((a, b) => new Date(b.created_on).getTime() - new Date(a.created_on).getTime())[0].medias[0].gateways[0].url
-            : 'https://nexus.glorylab.xyz/1/5/layer0_aabdf64adf.jpg';
+            : assetsManager.getAsDataUrl(assetsManager.getDefaultLayer0(), 'image/jpeg');
 
         const ogImage = await new ImageResponse(
             (
@@ -124,7 +224,7 @@ export default async function handler(request) {
 
                     {/* Layer 1 */}
                     <img
-                        src="https://nexus.glorylab.xyz/1/5/layer1_248de33d2e.png"
+                        src={assetsManager.getAsDataUrl(assetsManager.getLayer1(), 'image/png')}
                         alt="Background Layer 1"
                         style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 2 }}
                     />
@@ -180,35 +280,38 @@ export default async function handler(request) {
                 ],
             },
         );
+        
+        monitor.end('generateImage');
 
-        const formData = new FormData();
-        formData.append('file', await ogImage.blob(), `${address}.png`);
+        // Clone response immediately to avoid multiple reads
+        monitor.start('prepareResponse');
+        const responseBlob = await ogImage.blob();
+        monitor.end('prepareResponse');
 
-        const compressedImageResponse = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/images/v1`, {
-            method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${CLOUDFLARE_API_TOKEN}`,
-            },
-            body: formData,
+        monitor.start('uploadToCloudflareBackground');
+        // Start background upload task with a clone of the response
+        const backgroundBlob = new Blob([responseBlob], { type: responseBlob.type });
+
+        setImmediate(() => {
+            uploadToCloudflareBackground(backgroundBlob, address as string, new PerformanceMonitor())
+                .catch(console.error);
         });
+        monitor.end('uploadToCloudflareBackground');
 
-        const responseData = await compressedImageResponse.json();
+        // End main task
+        monitor.end('total');
+        console.log('Main task completed:', monitor.getSummary());
 
-        if (!responseData.success) {
-            console.error('Failed to upload image to Cloudflare:', responseData.errors);
-            return new Response('Failed to generate image', { status: 500 });
-        }
+        res.setHeader('Content-Type', 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
 
-        const compressedImageUrl = responseData.result.variants[0];
-
-        await setToKV(address, {
-            url: compressedImageUrl,
-            lastUpdated: Date.now().toString(),
-        });
-
-        return Response.redirect(compressedImageUrl);
+        // Convert blob to buffer and send
+        const arrayBuffer = await responseBlob.arrayBuffer();
+        return res.send(Buffer.from(arrayBuffer));
     } catch (error) {
+        monitor.end('total');
         console.error('Error generating OG image:', error);
-        return new Response('Failed to generate image', { status: 500 });
+        console.log(monitor.getSummary());
+        return res.status(500).json({ error: 'Failed to generate image' });
     }
 }
