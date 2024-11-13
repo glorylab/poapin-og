@@ -324,7 +324,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Clone response immediately to avoid multiple reads
         monitor.start('prepareResponse');
         const responseBlob = await ogImage.blob();
-        ogImageSizeBytes.labels({ address: address as string }).set(responseBlob.size);
+        ogImageSizeBytes.observe(responseBlob.size); 
         monitor.end('prepareResponse');
 
         monitor.start('uploadToCloudflareBackground');

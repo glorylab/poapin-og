@@ -20,10 +20,17 @@ export const ogImageRequestsTotal = new Counter({
 });
 
 // Size of generated OG images in bytes
-export const ogImageSizeBytes = new Gauge({
+export const ogImageSizeBytes = new Histogram({
     name: 'og_image_size_bytes',
     help: 'Size of generated OG images in bytes',
     labelNames: ['address'],
+    buckets: [
+        100000,  // 100KB
+        500000,  // 500KB
+        1000000, // 1MB
+        2000000, // 2MB
+        5000000  // 5MB
+    ],
     registers: [register]
 });
 
