@@ -3,11 +3,23 @@ import { ImageResponse } from '@vercel/og';
 import { getFromKV, setToKV } from '../../../../utils/kv';
 import { assetsManager } from '../../../../utils/assetsManager';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { cloudflareUploadDuration, ogImageGenerationDuration, ogImageRequestsTotal, ogImageSizeBytes } from '../../../../utils/metrics';
 
 class PerformanceMonitor {
     private timers: Map<string, number> = new Map();
     private durations: Map<string, number> = new Map();
+    private address: string;
+    private cacheHit: boolean = false;
+    private status: string = 'success';
 
+    constructor(address: string, cacheHit: boolean = false) {
+        this.address = address;
+        this.cacheHit = cacheHit;
+    }
+
+    setStatus(status: string) {
+        this.status = status;
+    }
     start(label: string) {
         this.timers.set(label, Date.now());
     }
@@ -18,6 +30,16 @@ class PerformanceMonitor {
             const duration = Date.now() - startTime;
             this.durations.set(label, duration);
             this.timers.delete(label);
+
+            // Record to Prometheus
+            ogImageGenerationDuration
+                .labels({
+                    step: label,
+                    address: this.address,
+                    cache_hit: String(this.cacheHit),
+                    status: this.status
+                })
+                .observe(duration / 1000);
         }
     }
 
@@ -64,6 +86,10 @@ const uploadToCloudflareBackground = async (imageBlob: Blob, address: string, mo
         const responseData = await compressedImageResponse.json();
         monitor.end('uploadToCloudflare');
 
+        cloudflareUploadDuration
+            .labels({ status: 'success', address })
+            .observe(monitor.getDuration('uploadToCloudflare') / 1000);
+
         if (!responseData.success) {
             throw new Error('Failed to upload to Cloudflare');
         }
@@ -79,8 +105,14 @@ const uploadToCloudflareBackground = async (imageBlob: Blob, address: string, mo
         console.log('Background task completed:', monitor.getSummary());
     } catch (error) {
         monitor.end('total');
+
         console.error('Background task failed:', error);
         console.log('Failed background task metrics:', monitor.getSummary());
+
+        cloudflareUploadDuration
+            .labels({ status: 'error', address })
+            .observe(monitor.getDuration('uploadToCloudflare') / 1000);
+        throw error;
     }
 };
 
@@ -119,20 +151,24 @@ const TIMEOUT_MS = 5000;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
 
-    const monitor = new PerformanceMonitor();
+    const { address } = req.query;
+
+    if (!address || Array.isArray(address)) {
+        ogImageRequestsTotal.labels({ status: 'error', cache_hit: 'false' }).inc();
+        return res.status(400).json({ error: 'Invalid address' });
+    }
+
+    const monitor = new PerformanceMonitor(address as string);
+
     monitor.start('total');
 
     try {
+        ogImageRequestsTotal.labels({ status: 'pending', cache_hit: 'false' }).inc();
+
         // Load font
         monitor.start('loadFont');
         const fontData = assetsManager.getFont();
         monitor.end('loadFont');
-
-        const { address } = req.query;
-
-        if (!address || Array.isArray(address)) {
-            return res.status(400).json({ error: 'Invalid address' });
-        }
 
         // Check cache
         monitor.start('checkCache');
@@ -140,6 +176,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         monitor.end('checkCache');
 
         if (cachedImage && Date.now() - Number(cachedImage.lastUpdated) < ONE_DAY) {
+            ogImageRequestsTotal.labels({ status: 'success', cache_hit: 'true' }).inc();
+
             monitor.end('total');
             console.log(monitor.getSummary());
             return res.redirect(cachedImage.url);
@@ -280,12 +318,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 ],
             },
         );
-        
+
         monitor.end('generateImage');
 
         // Clone response immediately to avoid multiple reads
         monitor.start('prepareResponse');
         const responseBlob = await ogImage.blob();
+        ogImageSizeBytes.labels({ address: address as string }).set(responseBlob.size);
         monitor.end('prepareResponse');
 
         monitor.start('uploadToCloudflareBackground');
@@ -293,13 +332,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const backgroundBlob = new Blob([responseBlob], { type: responseBlob.type });
 
         setImmediate(() => {
-            uploadToCloudflareBackground(backgroundBlob, address as string, new PerformanceMonitor())
-                .catch(console.error);
+            const bgMonitor = new PerformanceMonitor(address as string, false);
+
+            uploadToCloudflareBackground(backgroundBlob, address as string, bgMonitor)
+                .catch(error => {
+                    bgMonitor.setStatus('error');
+                    console.error('Background task failed:', error);
+                });
         });
         monitor.end('uploadToCloudflareBackground');
 
         // End main task
         monitor.end('total');
+        ogImageRequestsTotal.labels({ status: 'success', cache_hit: 'false' }).inc();
         console.log('Main task completed:', monitor.getSummary());
 
         res.setHeader('Content-Type', 'image/png');
@@ -309,7 +354,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const arrayBuffer = await responseBlob.arrayBuffer();
         return res.send(Buffer.from(arrayBuffer));
     } catch (error) {
+        monitor.setStatus('error');
         monitor.end('total');
+
+        ogImageRequestsTotal.labels({ status: 'error', cache_hit: 'false' }).inc();
+
         console.error('Error generating OG image:', error);
         console.log(monitor.getSummary());
         return res.status(500).json({ error: 'Failed to generate image' });
