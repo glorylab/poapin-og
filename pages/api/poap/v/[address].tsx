@@ -324,24 +324,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Clone response immediately to avoid multiple reads
         monitor.start('prepareResponse');
         const responseBlob = await ogImage.blob();
-        ogImageSizeBytes.observe(responseBlob.size);
+        ogImageSizeBytes.observe(responseBlob.size); 
         monitor.end('prepareResponse');
 
         monitor.start('uploadToCloudflareBackground');
-        {
-            // Start background upload task with a clone of the response
-            const backgroundBlob = new Blob([responseBlob], { type: responseBlob.type });
+        // Start background upload task with a clone of the response
+        const backgroundBlob = new Blob([responseBlob], { type: responseBlob.type });
 
-            setImmediate(() => {
-                const bgMonitor = new PerformanceMonitor(address as string, false);
+        setImmediate(() => {
+            const bgMonitor = new PerformanceMonitor(address as string, false);
 
-                uploadToCloudflareBackground(backgroundBlob, address as string, bgMonitor)
-                    .catch(error => {
-                        bgMonitor.setStatus('error');
-                        console.error('Background task failed:', error);
-                    });
-            });
-        }
+            uploadToCloudflareBackground(backgroundBlob, address as string, bgMonitor)
+                .catch(error => {
+                    bgMonitor.setStatus('error');
+                    console.error('Background task failed:', error);
+                });
+        });
         monitor.end('uploadToCloudflareBackground');
 
         // End main task
@@ -352,21 +350,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'public, max-age=86400');
 
-        monitor.start('processResponse');
-        {
-            // Convert blob to arrayBuffer
-            const arrayBuffer = await responseBlob.arrayBuffer();
-            // Create buffer and send immediately
-            const buffer = Buffer.from(arrayBuffer);
-
-            res.setHeader('Content-Type', 'image/png');
-            res.setHeader('Cache-Control', 'public, max-age=86400');
-
-            res.send(buffer);
-
-            buffer.fill(0);
-        }
-        monitor.end('processResponse');
+        // Convert blob to buffer and send
+        const arrayBuffer = await responseBlob.arrayBuffer();
+        return res.send(Buffer.from(arrayBuffer));
     } catch (error) {
         monitor.setStatus('error');
         monitor.end('total');
@@ -376,9 +362,5 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         console.error('Error generating OG image:', error);
         console.log(monitor.getSummary());
         return res.status(500).json({ error: 'Failed to generate image' });
-    } finally {
-        if (global.gc) {
-            global.gc();
-        }
     }
 }

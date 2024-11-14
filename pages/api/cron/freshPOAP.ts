@@ -1,9 +1,4 @@
-import { createClient } from '@vercel/kv';
-
-const kvClient = createClient({
-  url: process.env.KV_REST_API_URL,
-  token: process.env.KV_REST_API_TOKEN,
-});
+import { getFromKV, setToKV } from '../../../utils/kv';
 
 const initialDate = new Date('2024-05-13T17:00:00Z');
 initialDate.setUTCHours(initialDate.getUTCHours() + 9);
@@ -23,7 +18,7 @@ export default async function handler(req, res) {
 
   if (req.method === 'GET') {
     try {
-      const lastUpdateTimestamp = await kvClient.get('lastUpdateTimestampOfPOAP') || INITIAL_TIMESTAMP;
+      const lastUpdateTimestamp = await getFromKV('lastUpdateTimestampOfPOAP') || INITIAL_TIMESTAMP;
       const currentTimestamp = Math.floor(Date.now() / 1000);
       console.info('Last update timestamp:', lastUpdateTimestamp);
 
@@ -57,7 +52,7 @@ export default async function handler(req, res) {
         setTimeout(() => sendRequest(address), 10);
       }
 
-      await kvClient.set('lastUpdateTimestampOfPOAP', currentTimestamp);
+      await setToKV('lastUpdateTimestampOfPOAP', currentTimestamp);
       console.info('lastUpdateTimestampOfPOAP:', currentTimestamp);
 
       res.status(200).json({ message: 'POAPs updated successfully' });
