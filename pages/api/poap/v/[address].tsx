@@ -4,68 +4,15 @@ import { getFromKV, setToKV } from '../../../../utils/kv';
 import { assetsManager } from '../../../../utils/assetsManager';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { cloudflareUploadDuration, ogImageGenerationDuration, ogImageRequestsTotal, ogImageSizeBytes } from '../../../../utils/metrics';
+import { PerformanceMonitor } from '../../../../utils/performanceMonitor';
 
-class PerformanceMonitor {
-    private timers: Map<string, number> = new Map();
-    private durations: Map<string, number> = new Map();
-    private address: string;
-    private cacheHit: boolean = false;
-    private status: string = 'success';
+const uploadTasks = new WeakMap<Blob, Promise<void>>();
 
-    constructor(address: string, cacheHit: boolean = false) {
-        this.address = address;
-        this.cacheHit = cacheHit;
-    }
-
-    setStatus(status: string) {
-        this.status = status;
-    }
-    start(label: string) {
-        this.timers.set(label, Date.now());
-    }
-
-    end(label: string) {
-        const startTime = this.timers.get(label);
-        if (startTime) {
-            const duration = Date.now() - startTime;
-            this.durations.set(label, duration);
-            this.timers.delete(label);
-
-            // Record to Prometheus
-            ogImageGenerationDuration
-                .labels({
-                    step: label,
-                    address: this.address,
-                    cache_hit: String(this.cacheHit),
-                    status: this.status
-                })
-                .observe(duration / 1000);
-        }
-    }
-
-    getDuration(label: string): number {
-        return this.durations.get(label) || 0;
-    }
-
-    getSummary(): string {
-        let summary = '\nPerformance Summary:\n';
-        let total = 0;
-
-        // Exclude total duration
-        this.durations.forEach((duration, label) => {
-            if (label !== 'total') {
-                summary += `${label}: ${duration}ms\n`;
-                total += duration;
-            }
-        });
-
-        const actualTotal = this.durations.get('total') || total;
-        summary += `Total Time: ${actualTotal}ms\n`;
-        return summary;
-    }
-}
-
-const uploadToCloudflareBackground = async (imageBlob: Blob, address: string, monitor: PerformanceMonitor) => {
+async function uploadToCloudflare(
+    imageBlob: Blob,
+    address: string,
+    monitor: PerformanceMonitor
+): Promise<void> {
     monitor.start('total');
     try {
         monitor.start('uploadToCloudflare');
@@ -103,6 +50,8 @@ const uploadToCloudflareBackground = async (imageBlob: Blob, address: string, mo
 
         monitor.end('total');
         console.log('Background task completed:', monitor.getSummary());
+
+        uploadTasks.delete(imageBlob);
     } catch (error) {
         monitor.end('total');
 
@@ -112,9 +61,31 @@ const uploadToCloudflareBackground = async (imageBlob: Blob, address: string, mo
         cloudflareUploadDuration
             .labels({ status: 'error', address })
             .observe(monitor.getDuration('uploadToCloudflare') / 1000);
+
+        uploadTasks.delete(imageBlob);
         throw error;
     }
 };
+
+async function streamImageResponse(imageBlob: Blob, res: NextApiResponse) {
+    const stream = imageBlob.stream();
+    const reader = stream.getReader();
+
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(Buffer.from(value));
+        }
+        res.end();
+    } catch (error) {
+        reader.releaseLock();
+        throw error;
+    }
+}
 
 export const config = {
     api: {
@@ -324,22 +295,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Clone response immediately to avoid multiple reads
         monitor.start('prepareResponse');
         const responseBlob = await ogImage.blob();
-        ogImageSizeBytes.observe(responseBlob.size); 
+        ogImageSizeBytes.observe(responseBlob.size);
         monitor.end('prepareResponse');
 
         monitor.start('uploadToCloudflareBackground');
         // Start background upload task with a clone of the response
         const backgroundBlob = new Blob([responseBlob], { type: responseBlob.type });
 
-        setImmediate(() => {
-            const bgMonitor = new PerformanceMonitor(address as string, false);
+        const uploadTask = uploadToCloudflare(
+            new Blob([responseBlob], { type: responseBlob.type }),
+            address as string,
+            new PerformanceMonitor(address as string)
+        );
+        uploadTasks.set(responseBlob, uploadTask);
 
-            uploadToCloudflareBackground(backgroundBlob, address as string, bgMonitor)
-                .catch(error => {
-                    bgMonitor.setStatus('error');
-                    console.error('Background task failed:', error);
-                });
-        });
         monitor.end('uploadToCloudflareBackground');
 
         // End main task
@@ -347,12 +316,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ogImageRequestsTotal.labels({ status: 'success', cache_hit: 'false' }).inc();
         console.log('Main task completed:', monitor.getSummary());
 
-        res.setHeader('Content-Type', 'image/png');
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-
-        // Convert blob to buffer and send
-        const arrayBuffer = await responseBlob.arrayBuffer();
-        return res.send(Buffer.from(arrayBuffer));
+        await streamImageResponse(responseBlob, res);
     } catch (error) {
         monitor.setStatus('error');
         monitor.end('total');
