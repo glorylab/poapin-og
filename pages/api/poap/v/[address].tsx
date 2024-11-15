@@ -5,6 +5,7 @@ import { assetsManager } from '../../../../utils/assetsManager';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { cloudflareUploadDuration, ogImageGenerationDuration, ogImageRequestsTotal, ogImageSizeBytes } from '../../../../utils/metrics';
 import { PerformanceMonitor } from '../../../../utils/performanceMonitor';
+import { imageValidator } from '../../../../utils/imageValidator';
 
 const uploadTasks = new WeakMap<Blob, Promise<void>>();
 
@@ -120,6 +121,65 @@ interface CachedImage {
 
 const TIMEOUT_MS = 5000;
 
+async function processPoapsWithValidation(poaps: any[], fallbackImageUrl: string) {
+    const validatedPoaps = [];
+
+    const processPromises = poaps.map(async (poap) => {
+        try {
+            const imageUrl = poap.event.image_url;
+            const { url: validatedUrl } = await imageValidator.validateAndProcessImage(imageUrl);
+
+            return {
+                ...poap,
+                event: {
+                    ...poap.event,
+                    image_url: validatedUrl
+                }
+            };
+        } catch (error) {
+            console.error(`Error processing POAP ${poap.tokenId}:`, error);
+            return {
+                ...poap,
+                event: {
+                    ...poap.event,
+                    image_url: fallbackImageUrl
+                }
+            };
+        }
+    });
+
+    const results = await Promise.all(processPromises);
+    return results;
+}
+
+const POAPImage = ({ key, index, src, alt }) => {
+    return (
+        <img
+            src={src}
+            alt={alt}
+            width={160}
+            height={160}
+            onError={(e) => {
+                e.currentTarget.src = '/fallback-poap-image.png';
+            }}
+            key={key}
+            style={{
+                position: 'absolute',
+                left: recentPoapsPositions[index].x,
+                top: recentPoapsPositions[index].y,
+                width: 160,
+                height: 160,
+                borderRadius: '50%',
+                border: '2px solid #FF9400',
+                boxShadow: '0 8px 12px rgba(0, 0, 0, 0.8)',
+                objectFit: 'cover',
+                imageRendering: 'pixelated',
+                zIndex: 1,
+            }}
+        />
+    );
+};
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
 
     const { address } = req.query;
@@ -185,6 +245,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         const recentPoaps = poaps.sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime()).slice(0, 7);
         recentPoaps.reverse();
 
+        monitor.start('validateImages');
+        const validatedPoaps = await processPoapsWithValidation(
+            recentPoaps,
+            assetsManager.getAsDataUrl(assetsManager.getDefaultPOAP(), 'image/png')
+        );
+        monitor.end('validateImages');
+
+
         const layer0ImageUrl = latestMoments && latestMoments.length > 0
             ? latestMoments.sort((a, b) => new Date(b.created_on).getTime() - new Date(a.created_on).getTime())[0].medias[0].gateways[0].url
             : assetsManager.getAsDataUrl(assetsManager.getDefaultLayer0(), 'image/jpeg');
@@ -210,25 +278,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                     />
 
                     {/* POAP images */}
-                    {recentPoaps.map((poap, index) => (
-                        <img
+                    {validatedPoaps.map((poap, index) => (
+                       
+                        <POAPImage
                             key={poap.tokenId}
+                            index={index}
                             src={poap.event.image_url}
-                            alt={poap.event.name}
-                            style={{
-                                position: 'absolute',
-                                left: recentPoapsPositions[index].x,
-                                top: recentPoapsPositions[index].y,
-                                width: 160,
-                                height: 160,
-                                borderRadius: '50%',
-                                border: '2px solid #FF9400',
-                                boxShadow: '0 8px 12px rgba(0, 0, 0, 0.8)',
-                                objectFit: 'cover',
-                                imageRendering: 'pixelated',
-                                zIndex: 1,
-                            }}
-                        />
+                            alt={poap.event.name} />
                     ))}
 
                     {/* Layer 1 */}

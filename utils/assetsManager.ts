@@ -1,15 +1,32 @@
-import { readFileSync } from 'fs';
+import fs from 'fs';
 import path from 'path';
 
-class AssetsManager {
+export class AssetsManager {
     private static instance: AssetsManager;
-    private assets: {
-        font?: Buffer;
-        layer1?: Buffer;
-        defaultLayer0?: Buffer;
-    } = {};
+    private defaultPOAP: Buffer;
+    private layer0: Buffer;
+    private layer1: Buffer;
+    private font: Buffer;
 
-    private constructor() {}
+    private constructor() {
+        const assetsDir = path.join(process.cwd(), 'assets');
+        
+        this.defaultPOAP = fs.readFileSync(
+            path.join(assetsDir, 'images', 'default-poap.png')
+        );
+        
+        this.layer0 = fs.readFileSync(
+            path.join(assetsDir, 'images', 'layer0.jpg')
+        );
+        
+        this.layer1 = fs.readFileSync(
+            path.join(assetsDir, 'images', 'layer1.png')
+        );
+        
+        this.font = fs.readFileSync(
+            path.join(assetsDir, 'fonts', 'MonaspaceXenon-WideMediumItalic.otf')
+        );
+    }
 
     public static getInstance(): AssetsManager {
         if (!AssetsManager.instance) {
@@ -18,39 +35,25 @@ class AssetsManager {
         return AssetsManager.instance;
     }
 
-    private loadAsset(relativePath: string): Buffer {
-        const filePath = path.join(process.cwd(), 'assets', relativePath);
-        try {
-            return readFileSync(filePath);
-        } catch (error) {
-            console.error(`Error loading asset: ${filePath}`, error);
-            throw new Error(`Failed to load asset: ${filePath}`);
-        }
-    }
-
-    public getFont(): Buffer {
-        if (!this.assets.font) {
-            this.assets.font = this.loadAsset('fonts/MonaspaceXenon-WideMediumItalic.otf');
-        }
-        return this.assets.font;
-    }
-
-    public getLayer1(): Buffer {
-        if (!this.assets.layer1) {
-            this.assets.layer1 = this.loadAsset('images/layer1.png');
-        }
-        return this.assets.layer1;
+    public getDefaultPOAP(): Buffer {
+        return this.defaultPOAP;
     }
 
     public getDefaultLayer0(): Buffer {
-        if (!this.assets.defaultLayer0) {
-            this.assets.defaultLayer0 = this.loadAsset('images/layer0.jpg');
-        }
-        return this.assets.defaultLayer0;
+        return this.layer0;
+    }
+
+    public getLayer1(): Buffer {
+        return this.layer1;
+    }
+
+    public getFont(): Buffer {
+        return this.font;
     }
 
     public getAsDataUrl(buffer: Buffer, mimeType: string): string {
-        return `data:${mimeType};base64,${buffer.toString('base64')}`;
+        const base64 = buffer.toString('base64');
+        return `data:${mimeType};base64,${base64}`;
     }
 }
 
