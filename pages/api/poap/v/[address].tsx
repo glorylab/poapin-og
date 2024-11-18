@@ -15,10 +15,11 @@ async function uploadToCloudflare(
     monitor: PerformanceMonitor
 ): Promise<void> {
     monitor.start('total');
+    const blobCopy = new Blob([imageBlob], { type: imageBlob.type });
     try {
         monitor.start('uploadToCloudflare');
         const formData = new FormData();
-        formData.append('file', imageBlob, `${address}.png`);
+        formData.append('file', blobCopy, `${address}.png`);
 
         const compressedImageResponse = await fetch(
             `https://api.cloudflare.com/client/v4/accounts/${CLOUDFLARE_ACCOUNT_ID}/images/v1`,
@@ -65,6 +66,8 @@ async function uploadToCloudflare(
 
         uploadTasks.delete(imageBlob);
         throw error;
+    } finally {
+        URL.revokeObjectURL(URL.createObjectURL(blobCopy));
     }
 };
 
@@ -193,6 +196,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     monitor.start('total');
 
+    const resources = {
+        backgroundBlob: null as Blob | null,
+        ogImage: null as ImageResponse | null,
+        responseBlob: null as Blob | null,
+        uploadTask: null as Promise<void> | null
+    };
+
+    const cleanup = () => {
+        if (resources.backgroundBlob) {
+            URL.revokeObjectURL(URL.createObjectURL(resources.backgroundBlob));
+            resources.backgroundBlob = null;
+        }
+        if (resources.responseBlob) {
+            URL.revokeObjectURL(URL.createObjectURL(resources.responseBlob));
+            resources.responseBlob = null;
+        }
+        resources.ogImage = null;
+    };
+
     try {
         ogImageRequestsTotal.labels({ status: 'pending', cache_hit: 'false' }).inc();
 
@@ -257,7 +279,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             ? latestMoments.sort((a, b) => new Date(b.created_on).getTime() - new Date(a.created_on).getTime())[0].medias[0].gateways[0].url
             : assetsManager.getAsDataUrl(assetsManager.getDefaultLayer0(), 'image/jpeg');
 
-        const ogImage = await new ImageResponse(
+        resources.ogImage = await new ImageResponse(
             (
                 <div
                     style={{
@@ -279,7 +301,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
                     {/* POAP images */}
                     {validatedPoaps.map((poap, index) => (
-                       
+
                         <POAPImage
                             key={poap.tokenId}
                             index={index}
@@ -350,20 +372,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         // Clone response immediately to avoid multiple reads
         monitor.start('prepareResponse');
-        const responseBlob = await ogImage.blob();
-        ogImageSizeBytes.observe(responseBlob.size);
+        resources.responseBlob = await resources.ogImage.blob();
+        ogImageSizeBytes.observe(resources.responseBlob.size);
         monitor.end('prepareResponse');
 
         monitor.start('uploadToCloudflareBackground');
         // Start background upload task with a clone of the response
-        const backgroundBlob = new Blob([responseBlob], { type: responseBlob.type });
+        resources.backgroundBlob = new Blob([resources.responseBlob], { type: resources.responseBlob.type });
 
         const uploadTask = uploadToCloudflare(
-            new Blob([responseBlob], { type: responseBlob.type }),
+            new Blob([resources.backgroundBlob], { type: resources.backgroundBlob.type }),
             address as string,
             new PerformanceMonitor(address as string)
         );
-        uploadTasks.set(responseBlob, uploadTask);
+        uploadTasks.set(resources.backgroundBlob, uploadTask);
 
         monitor.end('uploadToCloudflareBackground');
 
@@ -372,7 +394,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         ogImageRequestsTotal.labels({ status: 'success', cache_hit: 'false' }).inc();
         console.log('Main task completed:', monitor.getSummary());
 
-        await streamImageResponse(responseBlob, res);
+        await streamImageResponse(resources.responseBlob, res);
     } catch (error) {
         monitor.setStatus('error');
         monitor.end('total');
@@ -382,5 +404,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         console.error('Error generating OG image:', error);
         console.log(monitor.getSummary());
         return res.status(500).json({ error: 'Failed to generate image' });
+    } finally {
+        cleanup();
     }
 }
